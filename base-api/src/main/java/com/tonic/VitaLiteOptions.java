@@ -92,10 +92,10 @@ public class VitaLiteOptions extends OptionsParser {
     private int world = -1;
 
     @CLIArgument(
-            name = "skipEnterGame",
-            description = "Login happens automatically, but entering the game (world) will not"
+            name = "autoEnterGame",
+            description = "Whether we enter the game (world) automatically or not. Login happens automatically regardless."
     )
-    private boolean skipEnterGame = false;
+    private boolean autoEnterGame = true;
 
     public void _checkAudio() {
         if (!AudioDeviceChecker.hasAudioDevice()) {

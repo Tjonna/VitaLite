@@ -415,11 +415,11 @@ public class GameManager extends Overlay {
                 try {
                     String[] parts = AutoLogin.getCredentials().split(":");
                     AutoLogin.setCredentials(null);
-                    boolean shouldActuallyLogin = !Static.getCliArgs().isSkipEnterGame();
+                    boolean shouldEnterGame = Static.getCliArgs().isAutoEnterGame();
                     if (parts.length == 2) {
-                        LoginService.login(parts[0], parts[1], shouldActuallyLogin);
+                        LoginService.login(parts[0], parts[1], shouldEnterGame);
                     } else if (parts.length == 3) {
-                        LoginService.login(parts[0], parts[1], parts[2], shouldActuallyLogin);
+                        LoginService.login(parts[0], parts[1], parts[2], shouldEnterGame);
                     }
                 } catch (Exception e) {
                     Logger.error("AutoLogin failed: " + e.getMessage());
