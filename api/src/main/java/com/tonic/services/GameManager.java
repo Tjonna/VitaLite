@@ -4,8 +4,6 @@ import com.tonic.Logger;
 import com.tonic.Static;
 import com.tonic.api.game.SceneAPI;
 import com.tonic.api.game.sailing.BoatStatsAPI;
-import com.tonic.services.pathfinder.sailing.BoatCollisionAPI;
-import com.tonic.services.pathfinder.sailing.BoatPathing;
 import com.tonic.api.game.sailing.SailingAPI;
 import com.tonic.api.threaded.Delays;
 import com.tonic.api.widgets.MiniMapAPI;
@@ -21,13 +19,14 @@ import com.tonic.headless.HeadlessMode;
 import com.tonic.services.hotswapper.PluginReloader;
 import com.tonic.services.mouse.ClickVisualizationOverlay;
 import com.tonic.services.mouse.MovementVisualizationOverlay;
+import com.tonic.services.pathfinder.Walker;
 import com.tonic.services.pathfinder.abstractions.IPathfinder;
 import com.tonic.services.pathfinder.abstractions.IStep;
-import com.tonic.services.pathfinder.Walker;
 import com.tonic.services.pathfinder.model.WalkerPath;
+import com.tonic.services.pathfinder.sailing.BoatCollisionAPI;
+import com.tonic.services.pathfinder.sailing.BoatPathing;
 import com.tonic.services.pathfinder.transports.TransportLoader;
 import com.tonic.services.stratpath.StratPathOverlay;
-import com.tonic.ui.VitaOverlay;
 import com.tonic.util.Profiler;
 import com.tonic.util.RuneliteConfigUtil;
 import com.tonic.util.ThreadPool;
@@ -46,35 +45,30 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.WorldService;
-import net.runelite.client.plugins.Plugin;
-import net.runelite.client.plugins.PluginInstantiationException;
-import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.ui.overlay.*;
+import net.runelite.client.ui.overlay.Overlay;
+import net.runelite.client.ui.overlay.OverlayLayer;
+import net.runelite.client.ui.overlay.OverlayManager;
+import net.runelite.client.ui.overlay.OverlayPosition;
 import net.runelite.http.api.worlds.WorldResult;
 
 import java.awt.*;
 import java.util.*;
+import java.util.Deque;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.ArrayList;
-import java.util.Set;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 
 /**
  * GameManager
  */
 public class GameManager extends Overlay {
     //static api
-    public static int getTickCount()
-    {
+    public static int getTickCount() {
         return INSTANCE.tickCount;
     }
+
     private static int lastUpdateTileObjects = 0;
     private static int lastUpdatePlayers = 0;
     private static int lastUpdateNpcs = 0;
@@ -91,32 +85,27 @@ public class GameManager extends Overlay {
     private static final TIntSet reachableTiles = new TIntHashSet();
     private static final Set<Integer> worldViews = ConcurrentHashMap.newKeySet();
 
-    public static Stream<PlayerEx> playerStream()
-    {
-        return  playerList().stream();
+    public static Stream<PlayerEx> playerStream() {
+        return playerList().stream();
     }
 
-    public static Stream<NpcEx> npcStream()
-    {
+    public static Stream<NpcEx> npcStream() {
         return npcList().stream();
     }
 
-    public static List<PlayerEx> playerList()
-    {
+    public static List<PlayerEx> playerList() {
         Client client = Static.getClient();
 
-        if (lastUpdatePlayers < client.getTickCount())
-        {
+        if (lastUpdatePlayers < client.getTickCount()) {
             players.clear();
-            for(int id : worldViews)
-            {
+            for (int id : worldViews) {
                 WorldView wv = client.getWorldView(id);
-                if(wv == null)
+                if (wv == null)
                     continue;
                 players.addAll(Static.invoke(() ->
-                        wv.players().stream()
-                                .map(PlayerEx::new)
-                                .collect(Collectors.toList())
+                                                     wv.players().stream()
+                                                       .map(PlayerEx::new)
+                                                       .collect(Collectors.toList())
                 ));
             }
             lastUpdatePlayers = client.getTickCount();
@@ -125,22 +114,19 @@ public class GameManager extends Overlay {
         return players;
     }
 
-    public static List<NpcEx> npcList()
-    {
+    public static List<NpcEx> npcList() {
         Client client = Static.getClient();
 
-        if (lastUpdateNpcs < client.getTickCount())
-        {
+        if (lastUpdateNpcs < client.getTickCount()) {
             npcs.clear();
-            for(int id : worldViews)
-            {
+            for (int id : worldViews) {
                 WorldView wv = client.getWorldView(id);
-                if(wv == null)
+                if (wv == null)
                     continue;
                 npcs.addAll(Static.invoke(() ->
-                        wv.npcs().stream()
-                                .map(NpcEx::new)
-                                .collect(Collectors.toList())
+                                                  wv.npcs().stream()
+                                                    .map(NpcEx::new)
+                                                    .collect(Collectors.toList())
                 ));
             }
             lastUpdateNpcs = client.getTickCount();
@@ -149,21 +135,17 @@ public class GameManager extends Overlay {
         return npcs;
     }
 
-    public static boolean isReachable(WorldPoint worldPoint)
-    {
+    public static boolean isReachable(WorldPoint worldPoint) {
         return isReachable(WorldPointUtil.compress(worldPoint));
     }
 
-    public static boolean isReachable(int x, int y, int plane)
-    {
+    public static boolean isReachable(int x, int y, int plane) {
         return isReachable(WorldPointUtil.compress(x, y, plane));
     }
 
-    public static boolean isReachable(int compressed)
-    {
+    public static boolean isReachable(int compressed) {
         Client client = Static.getClient();
-        if(lastUpdateReachableTiles < client.getTickCount())
-        {
+        if (lastUpdateReachableTiles < client.getTickCount()) {
             reachableTiles.clear();
             reachableTiles.addAll(SceneAPI.reachableTilesCompressed(PlayerEx.getLocal().getWorldPoint()));
             lastUpdateReachableTiles = client.getTickCount();
@@ -171,15 +153,13 @@ public class GameManager extends Overlay {
         return reachableTiles.contains(compressed);
     }
 
-    public static List<Tile> getTiles()
-    {
+    public static List<Tile> getTiles() {
         Client client = Static.getClient();
         int totalSize = Constants.SCENE_SIZE * Constants.SCENE_SIZE * worldViews.size();
         List<Tile> out = new ArrayList<>(totalSize);
-        for(int id : worldViews)
-        {
+        for (int id : worldViews) {
             WorldView wv = client.getWorldView(id);
-            if(wv == null)
+            if (wv == null)
                 continue;
 
             Tile[][] planeTiles = wv.getScene().getTiles()[wv.getPlane()];
@@ -191,25 +171,21 @@ public class GameManager extends Overlay {
         return out;
     }
 
-    public static Stream<TileObjectEx> objectStream()
-    {
+    public static Stream<TileObjectEx> objectStream() {
         return objectList().stream();
     }
 
-    public static List<TileObjectEx> objectList()
-    {
+    public static List<TileObjectEx> objectList() {
         Client client = Static.getClient();
 
-        if (lastUpdateTileObjects < client.getTickCount())
-        {
+        if (lastUpdateTileObjects < client.getTickCount()) {
             tileObjects.clear();
 
             ArrayList<TileObjectEx> objects = Static.invoke(() -> {
                 ArrayList<TileObjectEx> temp = new ArrayList<>();
-                for(int wv : worldViews)
-                {
+                for (int wv : worldViews) {
                     WorldView worldView = client.getWorldView(wv);
-                    if(worldView == null)
+                    if (worldView == null)
                         continue;
 
                     Tile[][] value = worldView.getScene().getTiles()[worldView.getPlane()];
@@ -219,7 +195,7 @@ public class GameManager extends Overlay {
                                 if (tile.getGameObjects() != null) {
                                     for (GameObject gameObject : tile.getGameObjects()) {
                                         if (gameObject != null && gameObject.getSceneMinLocation().equals(tile.getSceneLocation())) {
-                                            if((gameObject.getHash() >>> 16 & 0x7L) != 2)
+                                            if ((gameObject.getHash() >>> 16 & 0x7L) != 2)
                                                 continue;
                                             temp.add(new TileObjectEx(gameObject));
                                         }
@@ -248,33 +224,25 @@ public class GameManager extends Overlay {
         return GameManager.tileObjects;
     }
 
-    public static Stream<TileItemEx> tileItemStream()
-    {
+    public static Stream<TileItemEx> tileItemStream() {
         return tileItemList().stream();
     }
 
-    public static List<TileItemEx> tileItemList()
-    {
+    public static List<TileItemEx> tileItemList() {
         Client client = Static.getClient();
-        if(lastUpdateTileItems < client.getTickCount())
-        {
+        if (lastUpdateTileItems < client.getTickCount()) {
             tileItemCache.clear();
             tileItemCache.addAll(Static.invoke(() -> {
                 ArrayList<TileItemEx> temp = new ArrayList<>();
                 WorldView wv = client.getTopLevelWorldView();
                 Tile[][] value = wv.getScene().getTiles()[wv.getPlane()];
-                for(int x = 0; x < value.length; x++)
-                {
-                    for (int y = 0; y < value[x].length; y++)
-                    {
+                for (int x = 0; x < value.length; x++) {
+                    for (int y = 0; y < value[x].length; y++) {
                         Tile tile = value[x][y];
                         if (tile != null) {
-                            if(tile.getGroundItems() != null)
-                            {
-                                for(TileItem tileItem : tile.getGroundItems())
-                                {
-                                    if(tileItem != null)
-                                    {
+                            if (tile.getGroundItems() != null) {
+                                for (TileItem tileItem : tile.getGroundItems()) {
+                                    if (tileItem != null) {
                                         WorldPoint wp = WorldPoint.fromScene(wv, x, y, wv.getPlane());
                                         TileItemEx itemEx = new TileItemEx(tileItem, wp);
                                         temp.add(itemEx);
@@ -293,8 +261,7 @@ public class GameManager extends Overlay {
         return tileItemCache;
     }
 
-    public static Stream<Widget> widgetStream()
-    {
+    public static Stream<Widget> widgetStream() {
         return widgetList().stream();
     }
 
@@ -350,8 +317,7 @@ public class GameManager extends Overlay {
 
     public static List<Widget> widgetList(int... rootIds) {
         Widget[] roots = new Widget[rootIds.length];
-        for(int i = 0; i < rootIds.length; i++)
-        {
+        for (int i = 0; i < rootIds.length; i++) {
             roots[i] = WidgetAPI.get(rootIds[i]);
         }
 
@@ -397,12 +363,10 @@ public class GameManager extends Overlay {
      * For internal use only, a call to this is injected into RL on
      * startup to ensure static init of this class runs early on.
      */
-    public static void init()
-    {
+    public static void init() {
     }
 
-    private GameManager()
-    {
+    private GameManager() {
         OverlayManager overlayManager = Static.getInjector().getInstance(OverlayManager.class);
         overlayManager.add(this);
 
@@ -426,15 +390,14 @@ public class GameManager extends Overlay {
         overlayManager.add(distanceOverlays);
 
         Static.getRuneLite()
-                .getEventBus()
-                .register(this);
+              .getEventBus()
+              .register(this);
         TransportLoader.init();
         BankCache.init();
 
         ThreadPool.submit(() -> {
             Client client = Static.getClient();
-            while(client == null || client.getGameState() != GameState.LOGIN_SCREEN)
-            {
+            while (client == null || client.getGameState() != GameState.LOGIN_SCREEN) {
                 Delays.wait(1000);
                 client = Static.getClient();
             }
@@ -444,28 +407,21 @@ public class GameManager extends Overlay {
 
             RuneliteConfigUtil.verifyCacheAndVersion(client.getRevision());
 
-            if(WorldSetter.getWorld() != -1)
-            {
+            if (WorldSetter.getWorld() != -1) {
                 hop(WorldSetter.getWorld(), client);
             }
 
-            if(AutoLogin.getCredentials() != null)
-            {
-                try
-                {
+            if (AutoLogin.getCredentials() != null) {
+                try {
                     String[] parts = AutoLogin.getCredentials().split(":");
                     AutoLogin.setCredentials(null);
-                    if(parts.length == 2)
-                    {
-                        LoginService.login(parts[0], parts[1], true);
+                    boolean shouldActuallyLogin = !Static.getCliArgs().isSkipEnterGame();
+                    if (parts.length == 2) {
+                        LoginService.login(parts[0], parts[1], shouldActuallyLogin);
+                    } else if (parts.length == 3) {
+                        LoginService.login(parts[0], parts[1], parts[2], shouldActuallyLogin);
                     }
-                    else if(parts.length == 3)
-                    {
-                        LoginService.login(parts[0], parts[1], parts[2], true);
-                    }
-                }
-                catch (Exception e)
-                {
+                } catch (Exception e) {
                     Logger.error("AutoLogin failed: " + e.getMessage());
                 }
             }
@@ -474,12 +430,12 @@ public class GameManager extends Overlay {
         System.out.println("GameCache initialized!");
     }
 
-    public void hop(int worldNumber, Client client)
-    {
+    public void hop(int worldNumber, Client client) {
         WorldResult worldResult = Static.getInjector().getInstance(WorldService.class).getWorlds();
-        if(worldResult == null) return;;
+        if (worldResult == null) return;
+        ;
         net.runelite.http.api.worlds.World world = worldResult.findWorld(worldNumber);
-        if(world == null) return;
+        if (world == null) return;
         final net.runelite.api.World rsWorld = client.createWorld();
         rsWorld.setActivity(world.getActivity());
         rsWorld.setAddress(world.getAddress());
@@ -487,8 +443,7 @@ public class GameManager extends Overlay {
         rsWorld.setPlayerCount(world.getPlayers());
         rsWorld.setLocation(world.getLocation());
         rsWorld.setTypes(net.runelite.client.util.WorldUtil.toWorldTypes(world.getTypes()));
-        if(client.getGameState() == GameState.LOGIN_SCREEN)
-        {
+        if (client.getGameState() == GameState.LOGIN_SCREEN) {
             client.changeWorld(rsWorld);
             return;
         }
@@ -506,37 +461,29 @@ public class GameManager extends Overlay {
     private final BoatOverlay boatOverlay = new BoatOverlay();
     private boolean boatDebugShowing = false;
 
-    public static void setPathPoints(List<WorldPoint> points)
-    {
+    public static void setPathPoints(List<WorldPoint> points) {
         INSTANCE.pathPoints = points;
     }
 
-    public static void clearPathPoints()
-    {
+    public static void clearPathPoints() {
         INSTANCE.pathPoints = null;
     }
 
     @Subscribe
-    protected void onGameTick(GameTick event)
-    {
+    protected void onGameTick(GameTick event) {
         tickCount++;
-        if(walkerPath != null && !walkerPath.step())
-        {
+        if (walkerPath != null && !walkerPath.step()) {
             walkerPath = null;
         }
 
-        if(sailingPath != null && !sailingPath.step())
-        {
+        if (sailingPath != null && !sailingPath.step()) {
             sailingPath = null;
         }
 
-        if(Static.getVitaConfig().getDrawBoatDebug() && !boatDebugShowing && SailingAPI.isOnBoat())
-        {
+        if (Static.getVitaConfig().getDrawBoatDebug() && !boatDebugShowing && SailingAPI.isOnBoat()) {
             boatOverlay.show();
             boatDebugShowing = true;
-        }
-        else if((!Static.getVitaConfig().getDrawBoatDebug() && boatDebugShowing) || !SailingAPI.isOnBoat())
-        {
+        } else if ((!Static.getVitaConfig().getDrawBoatDebug() && boatDebugShowing) || !SailingAPI.isOnBoat()) {
             boatOverlay.hide();
             boatDebugShowing = false;
         }
@@ -544,15 +491,12 @@ public class GameManager extends Overlay {
         processSpeed();
 
         Widget gameframe = LayoutView.GAMEFRAME.getWidget();
-        if(gameframe == null)
+        if (gameframe == null)
             return;
 
-        if(WidgetAPI.isVisible(gameframe) && Static.isHeadless())
-        {
+        if (WidgetAPI.isVisible(gameframe) && Static.isHeadless()) {
             gameframe.setHidden(true);
-        }
-        else if(!WidgetAPI.isVisible(gameframe) && !Static.isHeadless())
-        {
+        } else if (!WidgetAPI.isVisible(gameframe) && !Static.isHeadless()) {
             gameframe.setHidden(false);
         }
 
@@ -565,39 +509,34 @@ public class GameManager extends Overlay {
 
             WorldPoint pos = PlayerEx.getLocal().getWorldPoint();
             HeadlessMode.updateMap(pos.getX(), pos.getY(), pos.getPlane(),
-                    (x, y, plane) -> Walker.getCollisionMap().all((short) x, (short) y, (byte) plane));
+                                   (x, y, plane) -> Walker.getCollisionMap().all((short) x, (short) y, (byte) plane));
         }
     }
 
     @Subscribe
-    public void onClientTick(ClientTick event)
-    {
+    public void onClientTick(ClientTick event) {
         Client client = Static.getClient();
-        if(client.getGameState() != GameState.LOGGED_IN)
+        if (client.getGameState() != GameState.LOGGED_IN)
             return;
 
-        if(Static.getVitaConfig().getDrawBoatDebug() && !boatOverlay.isHidden() && SailingAPI.isOnBoat())
-        {
+        if (Static.getVitaConfig().getDrawBoatDebug() && !boatOverlay.isHidden() && SailingAPI.isOnBoat()) {
             boatOverlay.update();
         }
     }
 
     @Subscribe
-    public void onGameStateChanged(GameStateChanged event)
-    {
-        if(event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
+    public void onGameStateChanged(GameStateChanged event) {
+        if (event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
             tickCount = 0;
     }
 
     @Subscribe
-    public void onWorldViewLoaded(WorldViewLoaded event)
-    {
+    public void onWorldViewLoaded(WorldViewLoaded event) {
         worldViews.add(event.getWorldView().getId());
     }
 
     @Subscribe
-    public void onWorldViewUnloaded(WorldViewUnloaded event)
-    {
+    public void onWorldViewUnloaded(WorldViewUnloaded event) {
         worldViews.remove(event.getWorldView().getId());
     }
 
@@ -605,7 +544,7 @@ public class GameManager extends Overlay {
     public void onMenuEntryAdded(MenuEntryAdded event) {
         final Client client = Static.getClient();
         final Widget map = client.getWidget(InterfaceID.Worldmap.MAP_CONTAINER);
-        if(map == null)
+        if (map == null)
             return;
 
         Point lastMenuOpenedPoint = client.getMouseCanvasPosition();
@@ -626,140 +565,128 @@ public class GameManager extends Overlay {
 
         String color = "<col=00ff00>";
 
-        if (SailingAPI.isNavigating())
-        {
-            if(sailingPath == null)
-            {
+        if (SailingAPI.isNavigating()) {
+            if (sailingPath == null) {
                 client.getMenu().createMenuEntry(0)
-                        .setOption("Sail ")
-                        .setTarget(color + wp.toString() + " ")
-                        .setParam0(event.getActionParam0())
-                        .setParam1(event.getActionParam1())
-                        .setIdentifier(event.getIdentifier())
-                        .setType(MenuAction.RUNELITE)
-                        .onClick(e -> {
-                            ThreadPool.submit(() -> {
-                                sailingPath = BoatPathing.travelTo(wp);
-                            });
-                        });
-            }
-            else
-            {
+                      .setOption("Sail ")
+                      .setTarget(color + wp.toString() + " ")
+                      .setParam0(event.getActionParam0())
+                      .setParam1(event.getActionParam1())
+                      .setIdentifier(event.getIdentifier())
+                      .setType(MenuAction.RUNELITE)
+                      .onClick(e -> {
+                          ThreadPool.submit(() -> {
+                              sailingPath = BoatPathing.travelTo(wp);
+                          });
+                      });
+            } else {
                 client.getMenu().createMenuEntry(0)
-                        .setOption("Cancel ")
-                        .setTarget(color + "Sailer ")
-                        .setParam0(event.getActionParam0())
-                        .setParam1(event.getActionParam1())
-                        .setIdentifier(event.getIdentifier())
-                        .setType(MenuAction.RUNELITE)
-                        .onClick(e -> {
-                            sailingPath = null;
-                            SailingAPI.unSetSails();
-                            clearPathPoints();
-                        });
+                      .setOption("Cancel ")
+                      .setTarget(color + "Sailer ")
+                      .setParam0(event.getActionParam0())
+                      .setParam1(event.getActionParam1())
+                      .setIdentifier(event.getIdentifier())
+                      .setType(MenuAction.RUNELITE)
+                      .onClick(e -> {
+                          sailingPath = null;
+                          SailingAPI.unSetSails();
+                          clearPathPoints();
+                      });
             }
 
             color = "<col=9B59B6>";
             client.getMenu().createMenuEntry(0)
-                    .setOption("Test Sail Path ")
-                    .setTarget(color + wp.toString() + " ")
-                    .setParam0(event.getActionParam0())
-                    .setParam1(event.getActionParam1())
-                    .setIdentifier(event.getIdentifier())
-                    .setType(MenuAction.RUNELITE)
-                    .onClick(e -> ThreadPool.submit(() -> {
-                        Profiler.Start("FindSailPath");
-                        testPoints = BoatPathing.findFullPath(BoatCollisionAPI.getPlayerBoatWorldPoint(), wp);
-                        Profiler.StopMS();
-                    }));
+                  .setOption("Test Sail Path ")
+                  .setTarget(color + wp.toString() + " ")
+                  .setParam0(event.getActionParam0())
+                  .setParam1(event.getActionParam1())
+                  .setIdentifier(event.getIdentifier())
+                  .setType(MenuAction.RUNELITE)
+                  .onClick(e -> ThreadPool.submit(() -> {
+                      Profiler.Start("FindSailPath");
+                      testPoints = BoatPathing.findFullPath(BoatCollisionAPI.getPlayerBoatWorldPoint(), wp);
+                      Profiler.StopMS();
+                  }));
             color = "<col=FF0000>";
-            if(testPoints != null)
-            {
+            if (testPoints != null) {
                 client.getMenu().createMenuEntry(0)
-                        .setOption("Clear ")
-                        .setTarget(color + "Test Sail Path ")
-                        .setParam0(event.getActionParam0())
-                        .setParam1(event.getActionParam1())
-                        .setIdentifier(event.getIdentifier())
-                        .setType(MenuAction.RUNELITE)
-                        .onClick(e -> testPoints = null);
+                      .setOption("Clear ")
+                      .setTarget(color + "Test Sail Path ")
+                      .setParam0(event.getActionParam0())
+                      .setParam1(event.getActionParam1())
+                      .setIdentifier(event.getIdentifier())
+                      .setType(MenuAction.RUNELITE)
+                      .onClick(e -> testPoints = null);
             }
 
             return;
         }
 
-        if(SailingAPI.isOnBoat())
+        if (SailingAPI.isOnBoat())
             return;
 
-        if(walkerPath == null)
-        {
+        if (walkerPath == null) {
             client.getMenu().createMenuEntry(0)
-                    .setOption("Walk ")
-                    .setTarget(color + wp.toString() + " ")
-                    .setParam0(event.getActionParam0())
-                    .setParam1(event.getActionParam1())
-                    .setIdentifier(event.getIdentifier())
-                    .setType(MenuAction.RUNELITE)
-                    .onClick(e -> walkerPath = WalkerPath.get(wp));
-        }
-        else
-        {
+                  .setOption("Walk ")
+                  .setTarget(color + wp.toString() + " ")
+                  .setParam0(event.getActionParam0())
+                  .setParam1(event.getActionParam1())
+                  .setIdentifier(event.getIdentifier())
+                  .setType(MenuAction.RUNELITE)
+                  .onClick(e -> walkerPath = WalkerPath.get(wp));
+        } else {
             client.getMenu().createMenuEntry(0)
-                    .setOption("Cancel ")
-                    .setTarget(color + "Walker ")
-                    .setParam0(event.getActionParam0())
-                    .setParam1(event.getActionParam1())
-                    .setIdentifier(event.getIdentifier())
-                    .setType(MenuAction.RUNELITE)
-                    .onClick(e -> walkerPath.cancel());
+                  .setOption("Cancel ")
+                  .setTarget(color + "Walker ")
+                  .setParam0(event.getActionParam0())
+                  .setParam1(event.getActionParam1())
+                  .setIdentifier(event.getIdentifier())
+                  .setType(MenuAction.RUNELITE)
+                  .onClick(e -> walkerPath.cancel());
         }
 
 
         color = "<col=9B59B6>";
         client.getMenu().createMenuEntry(0)
-                .setOption("Test Path ")
-                .setTarget(color + wp.toString() + " ")
-                .setParam0(event.getActionParam0())
-                .setParam1(event.getActionParam1())
-                .setIdentifier(event.getIdentifier())
-                .setType(MenuAction.RUNELITE)
-                .onClick(e -> ThreadPool.submit(() -> {
-                    final IPathfinder engine = Static.getVitaConfig().getPathfinderImpl().newInstance();
-                    List<? extends IStep> path = engine.find(wp);
-                    if(path == null || path.isEmpty())
-                        return;
-                    testPoints = IStep.toWorldPoints(path);
-                }));
+              .setOption("Test Path ")
+              .setTarget(color + wp.toString() + " ")
+              .setParam0(event.getActionParam0())
+              .setParam1(event.getActionParam1())
+              .setIdentifier(event.getIdentifier())
+              .setType(MenuAction.RUNELITE)
+              .onClick(e -> ThreadPool.submit(() -> {
+                  final IPathfinder engine = Static.getVitaConfig().getPathfinderImpl().newInstance();
+                  List<? extends IStep> path = engine.find(wp);
+                  if (path == null || path.isEmpty())
+                      return;
+                  testPoints = IStep.toWorldPoints(path);
+              }));
         color = "<col=FF0000>";
-        if(testPoints != null)
-        {
+        if (testPoints != null) {
             client.getMenu().createMenuEntry(0)
-                    .setOption("Clear ")
-                    .setTarget(color + "Test Path ")
-                    .setParam0(event.getActionParam0())
-                    .setParam1(event.getActionParam1())
-                    .setIdentifier(event.getIdentifier())
-                    .setType(MenuAction.RUNELITE)
-                    .onClick(e -> testPoints = null);
+                  .setOption("Clear ")
+                  .setTarget(color + "Test Path ")
+                  .setParam0(event.getActionParam0())
+                  .setParam1(event.getActionParam1())
+                  .setIdentifier(event.getIdentifier())
+                  .setType(MenuAction.RUNELITE)
+                  .onClick(e -> testPoints = null);
         }
     }
 
     @Override
-    public Dimension render(Graphics2D graphics)
-    {
-        if(testPoints != null && !testPoints.isEmpty())
-        {
+    public Dimension render(Graphics2D graphics) {
+        if (testPoints != null && !testPoints.isEmpty()) {
             WorldMapAPI.drawPath(graphics, testPoints, Color.MAGENTA);
             MiniMapAPI.drawPath(graphics, testPoints, Color.MAGENTA);
             WorldPoint last = testPoints.get(testPoints.size() - 1);
             WorldMapAPI.drawRedMapMarker(graphics, last);
         }
 
-        if(!Static.getVitaConfig().shouldDrawWalkerPath())
+        if (!Static.getVitaConfig().shouldDrawWalkerPath())
             return null;
 
-        if(pathPoints != null && !pathPoints.isEmpty())
-        {
+        if (pathPoints != null && !pathPoints.isEmpty()) {
             WorldMapAPI.drawPath(graphics, pathPoints, Color.CYAN);
             MiniMapAPI.drawPath(graphics, pathPoints, Color.CYAN);
             WorldPoint last = pathPoints.get(pathPoints.size() - 1);
@@ -768,57 +695,49 @@ public class GameManager extends Overlay {
 
         return null;
     }
+
     @Subscribe
-    public void onLoginResponse(LoginResponse event)
-    {
-        if(event.isBanned())
-        {
-            Logger.error("LoginResponse: Account is banned!" );
+    public void onLoginResponse(LoginResponse event) {
+        if (event.isBanned()) {
+            Logger.error("LoginResponse: Account is banned!");
         }
     }
 
     @Subscribe
-    public void onVarbitChanged(VarbitChanged event)
-    {
+    public void onVarbitChanged(VarbitChanged event) {
         BoatStatsAPI.update(event);
     }
 
     private LocalPoint lastPoint;
-    private void processSpeed()
-    {
-        if(!SailingAPI.isOnBoat())
+
+    private void processSpeed() {
+        if (!SailingAPI.isOnBoat())
             return;
         WorldEntity we = BoatCollisionAPI.getPlayerBoat();
         LocalPoint lp = we.getTargetLocation();
 
-        if (!lp.equals(lastPoint))
-        {
-            if (lastPoint != null)
-            {
+        if (!lp.equals(lastPoint)) {
+            if (lastPoint != null) {
                 double trueSpeed = (float) Math.hypot(
                         (lastPoint.getX() - lp.getX()),
                         (lastPoint.getY() - lp.getY())
                 );
                 int speed = roundToQuarterTile(trueSpeed) / 32;
-                if(speed > 32)
+                if (speed > 32)
                     return;
                 SailingAPI.setSpeed(speed);
             }
             lastPoint = lp;
-        }
-        else
-        {
+        } else {
             SailingAPI.setSpeed(0);
         }
     }
 
-    private static int roundToQuarterTile(double trueSpeed)
-    {
+    private static int roundToQuarterTile(double trueSpeed) {
         int quarterTileFloor = ((int) trueSpeed) & ~0x1F;
         int quarterTileCeil = quarterTileFloor + 0x20;
 
-        if (quarterTileCeil - trueSpeed < trueSpeed - quarterTileFloor)
-        {
+        if (quarterTileCeil - trueSpeed < trueSpeed - quarterTileFloor) {
             return quarterTileCeil;
         }
 

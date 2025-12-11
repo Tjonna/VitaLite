@@ -6,8 +6,7 @@ import com.tonic.util.optionsparser.annotations.CLIArgument;
 import lombok.Getter;
 
 @Getter
-public class VitaLiteOptions extends OptionsParser
-{
+public class VitaLiteOptions extends OptionsParser {
     @CLIArgument(
             name = "rsdump",
             description = "[Optional] Path to dump the gamepack to"
@@ -92,10 +91,14 @@ public class VitaLiteOptions extends OptionsParser
     )
     private int world = -1;
 
-    public void _checkAudio()
-    {
-        if(!AudioDeviceChecker.hasAudioDevice())
-        {
+    @CLIArgument(
+            name = "skipEnterGame",
+            description = "Login happens automatically, but entering the game (world) will not"
+    )
+    private boolean skipEnterGame = false;
+
+    public void _checkAudio() {
+        if (!AudioDeviceChecker.hasAudioDevice()) {
             noMusic = true;
         }
     }
